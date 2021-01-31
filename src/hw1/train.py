@@ -88,9 +88,13 @@ if __name__ == "__main__":
     env = make("MountainCar-v0")
     env.seed(SEED)
     env.action_space.seed(SEED)
-    ql = QLearning(state_dim=GRID_SIZE_X * GRID_SIZE_Y, action_dim=3, alpha=0.01, gamma=0.98)
-    eps = 0.1
+
     eps_decay = 0.9
+    lr = 0.1
+    gamma = 0.98
+
+    ql = QLearning(state_dim=GRID_SIZE_X * GRID_SIZE_Y, action_dim=3, alpha=lr, gamma=gamma)
+    eps = 0.1
     transitions = 4000000
     trajectory = []
     state = transform_state(env.reset())
@@ -124,7 +128,7 @@ if __name__ == "__main__":
             rewards2 = evaluate_policy(ql, 5)
             mean, std = np.mean(rewards1), np.std(rewards1)
             print(f"Mine Step: {i + 1}, Reward mean: {mean}, Reward std: {std}")
-            ql.save('agent', mean)
 
             mean, std = np.mean(rewards2), np.std(rewards2)
             print(f"Initial Step: {i + 1}, Reward mean: {mean}, Reward std: {std}")
+            ql.save('agent', mean)
