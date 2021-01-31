@@ -7,6 +7,9 @@ import random
 from numpy.random import MT19937
 from numpy.random import RandomState, SeedSequence
 
+import plotly.graph_objs as go
+import plotly
+
 SEED = 65537
 rs = RandomState(MT19937(SeedSequence(SEED)))
 
@@ -88,21 +91,53 @@ def evaluate_policy_mine(agent, episodes=5):
     return returns
 
 
+def plot(data):
+    def gen_color():
+        return {
+            'color': f'rgba({np.random.randint(0, 255)},'
+                     f' {np.random.randint(0, 255)},'
+                     f' {np.random.randint(0, 255)},'
+                     f' 0.8)'
+        }
+
+    traces = []
+    for method_name, method_data in data.items():
+        traces.append(
+            go.Scatter(
+                x=method_data[0],
+                y=method_data[1],
+                mode='lines',
+                marker=gen_color(),
+                name=method_name
+            )
+        )
+
+    layout = go.Layout(
+        xaxis=dict(title="transitions", zeroline=False),
+        yaxis=dict(title='$reward$', zeroline=False)
+    )
+
+    fig = go.Figure(data=traces, layout=layout)
+    plotly.offline.iplot(fig)
+
+
 if __name__ == "__main__":
     env = make("MountainCar-v0")
     env.seed(SEED)
     env.action_space.seed(SEED)
 
-    eps_decay = 0.8
-    lr = 0.3
+    eps_decay = 0.6
+    lr = 0.2
     lr_decay = 0.92
-    gamma = 0.97
+    gamma = 0.7
 
     ql = QLearning(state_dim=GRID_SIZE_X * GRID_SIZE_Y, action_dim=3, alpha=lr, gamma=gamma, lr_decay=lr_decay)
-    eps = 0.15
-    transitions = 4000000
+    eps = 0.2
+    transitions = 2000000
     trajectory = []
     state = transform_state(env.reset())
+    rewards_hist = []
+    x = []
     for i in range(transitions):
         total_reward = 0
         steps = 0
@@ -116,8 +151,7 @@ if __name__ == "__main__":
             action = ql.act(state)
 
         next_state, reward, done, _ = env.step(action)
-        pos, vel = next_state
-        reward += gamma * abs(vel) / 0.07
+        reward += abs(next_state[1]) / 0.07
         next_state = transform_state(next_state)
 
         trajectory.append((state, action, next_state, reward, done))
@@ -126,7 +160,7 @@ if __name__ == "__main__":
             for transition in reversed(trajectory):
                 ql.update(transition)
             trajectory = []
-            eps = 0.15
+            eps = 0.1
         state = next_state if not done else transform_state(env.reset())
 
         if (i + 1) % (transitions // 100) == 0:
@@ -138,3 +172,11 @@ if __name__ == "__main__":
             mean, std = np.mean(rewards2), np.std(rewards2)
             print(f"Initial Step: {i + 1}, Reward mean: {mean}, Reward std: {std}")
             ql.save('agent', mean)
+
+            x.append(i)
+            rewards_hist.append(mean)
+
+    data = {
+        'q-learning': (x, rewards_hist)
+    }
+    plot(data)

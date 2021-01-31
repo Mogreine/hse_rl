@@ -104,7 +104,7 @@ if __name__ == "__main__":
     gamma = 0.97
 
     ql = Sarsa(state_dim=GRID_SIZE_X * GRID_SIZE_Y, action_dim=3, alpha=lr, gamma=gamma, lr_decay=lr_decay)
-    eps = 0.15
+    eps = 0.1
     transitions = 4000000
     trajectory = []
     state = transform_state(env.reset())
@@ -131,7 +131,7 @@ if __name__ == "__main__":
             for transition in reversed(trajectory):
                 ql.update(transition)
             trajectory = []
-            eps = 0.15
+            eps = 0.1
         state = next_state if not done else transform_state(env.reset())
 
         if (i + 1) % (transitions // 100) == 0:

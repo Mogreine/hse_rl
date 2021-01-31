@@ -12,11 +12,12 @@ rs = RandomState(MT19937(SeedSequence(SEED)))
 
 class Agent:
     def __init__(self):
-        # self.Qfun = np.load(__file__[:-8] + "agent.npz")
-        self.Qfun = np.load(__file__[:-14] + "/agent.npy")
+        self.Qfun = np.load(__file__[:-8] + "/agent.npy")
+        # self.Qfun = np.load(__file__[:-14] + "/agent.npy")
         self.eps = 0.1
 
     def act(self, state):
+        state = transform_state(state)
         if rs.random() < self.eps:
             a = rs.randint(0, 3)
         else:
