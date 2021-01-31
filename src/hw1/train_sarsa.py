@@ -23,22 +23,27 @@ def transform_state(state):
     return x + GRID_SIZE_X * y
 
 
-class QLearning:
+class Sarsa:
     def __init__(self, state_dim, action_dim, alpha=0.9, gamma=0.9, lr_decay=1.0):
         self.Qfun = np.zeros((state_dim, action_dim)) + 2.
         self.alpha = alpha
         self.gamma = gamma
         self.best_score = -200
         self.lr_decay = lr_decay
+        self.eps = 0.1
 
     def update(self, transition):
         state, action, next_state, reward, done = transition
+        next_action = self.act(next_state)
         self.Qfun[state][action] = self.Qfun[state][action] * (1 - self.lr_decay * self.alpha)\
                                    + self.lr_decay * self.alpha\
-                                   * (reward + self.gamma * np.amax(self.Qfun[next_state]) - self.Qfun[state][action])
+                                   * (reward + self.gamma * np.amax(self.Qfun[next_state][next_action]))
 
     def act(self, state):
-        a = np.argmax(self.Qfun[state])
+        if rs.random() < eps:
+            a = rs.randint(0, 3)
+        else:
+            a = np.argmax(self.Qfun[state])
         return a
 
     def save(self, path, score):
@@ -98,7 +103,7 @@ if __name__ == "__main__":
     lr_decay = 0.92
     gamma = 0.97
 
-    ql = QLearning(state_dim=GRID_SIZE_X * GRID_SIZE_Y, action_dim=3, alpha=lr, gamma=gamma, lr_decay=lr_decay)
+    ql = Sarsa(state_dim=GRID_SIZE_X * GRID_SIZE_Y, action_dim=3, alpha=lr, gamma=gamma, lr_decay=lr_decay)
     eps = 0.15
     transitions = 4000000
     trajectory = []
