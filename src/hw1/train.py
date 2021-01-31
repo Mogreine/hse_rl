@@ -11,8 +11,8 @@ SEED = 65537
 rs = RandomState(MT19937(SeedSequence(SEED)))
 
 GAMMA = 0.98
-GRID_SIZE_X = 30
-GRID_SIZE_Y = 30
+GRID_SIZE_X = 40
+GRID_SIZE_Y = 40
 
 
 # Simple discretization
@@ -24,15 +24,18 @@ def transform_state(state):
 
 
 class QLearning:
-    def __init__(self, state_dim, action_dim, alpha=0.9, gamma=0.9):
+    def __init__(self, state_dim, action_dim, alpha=0.9, gamma=0.9, lr_decay=1.0):
         self.Qfun = np.zeros((state_dim, action_dim)) + 2.
         self.alpha = alpha
         self.gamma = gamma
         self.best_score = -200
+        self.lr_decay = lr_decay
 
     def update(self, transition):
         state, action, next_state, reward, done = transition
-        self.Qfun[state][action] += self.alpha * (reward + self.gamma * np.amax(self.Qfun[next_state]) - self.Qfun[state][action])
+        self.Qfun[state][action] = self.Qfun[state][action] * (1 - self.lr_decay * self.alpha)\
+                                   + self.lr_decay * self.alpha\
+                                   * (reward + self.gamma * np.amax(self.Qfun[next_state]) - self.Qfun[state][action])
 
     def act(self, state):
         a = np.argmax(self.Qfun[state])
@@ -78,7 +81,8 @@ def evaluate_policy_mine(agent, episodes=5):
         while not done:
             action = agent.act(transform_state(state))
             state, reward, done, _ = env.step(action)
-            reward += abs(state[1]) / 0.07
+            pos, vel = state
+            reward += abs(vel) / 0.07 + 0 if pos < 0 else + pos / 0.6
             total_reward += reward
         returns.append(total_reward)
     return returns
@@ -89,11 +93,12 @@ if __name__ == "__main__":
     env.seed(SEED)
     env.action_space.seed(SEED)
 
-    eps_decay = 0.9
-    lr = 0.1
-    gamma = 0.98
+    eps_decay = 0.8
+    lr = 0.3
+    lr_decay = 0.92
+    gamma = 0.97
 
-    ql = QLearning(state_dim=GRID_SIZE_X * GRID_SIZE_Y, action_dim=3, alpha=lr, gamma=gamma)
+    ql = QLearning(state_dim=GRID_SIZE_X * GRID_SIZE_Y, action_dim=3, alpha=lr, gamma=gamma, lr_decay=lr_decay)
     eps = 0.1
     transitions = 4000000
     trajectory = []
