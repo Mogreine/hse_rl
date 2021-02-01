@@ -13,7 +13,6 @@ import plotly
 SEED = 65537
 rs = RandomState(MT19937(SeedSequence(SEED)))
 
-GAMMA = 0.98
 GRID_SIZE_X = 40
 GRID_SIZE_Y = 40
 
@@ -36,6 +35,7 @@ class QLearning:
 
     def update(self, transition):
         state, action, next_state, reward, done = transition
+        # Q(s, a) = (1 - lr) * Q(s, a) + lr * (r + gamma * max_a(Q(s')) - Q(s, a))
         self.Qfun[state][action] = self.Qfun[state][action] * (1 - self.lr_decay * self.alpha)\
                                    + self.lr_decay * self.alpha\
                                    * (reward + self.gamma * np.amax(self.Qfun[next_state]) - self.Qfun[state][action])
@@ -45,8 +45,6 @@ class QLearning:
         return a
 
     def save(self, path, score):
-        # weight = np.array(self.weight)
-        # bias = np.array(self.bias)
         if self.best_score < score:
             self.best_score = score
             np.save(path, self.Qfun)
