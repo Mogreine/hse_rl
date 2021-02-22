@@ -80,6 +80,7 @@ def evaluate_policy_mine(agent, episodes=5):
         total_reward = 0.
 
         while not done:
+            env.render()
             action = agent.act(transform_state(state))
             state, reward, done, _ = env.step(action)
             pos, vel = state
