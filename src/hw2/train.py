@@ -10,26 +10,31 @@ from numpy.random import MT19937
 from numpy.random import RandomState, SeedSequence
 
 GAMMA = 0.99
-INITIAL_STEPS = 1024
+INITIAL_STEPS = 4000
 TRANSITIONS = 500000
 STEPS_PER_UPDATE = 4
 STEPS_PER_TARGET_UPDATE = STEPS_PER_UPDATE * 1000
-BATCH_SIZE = 128
-LEARNING_RATE = 5e-4
+BUFFER_SIZE = 10_000
+BATCH_SIZE = 512
+LEARNING_RATE = 1e-4
+l2 = 1e-5
+
+GRADIENT_CLIP = 5
+HIDDEN_DIM = 1024
 
 SEED = 65537
 rs = RandomState(MT19937(SeedSequence(SEED)))
+torch.manual_seed(SEED)
 
 
 class Net(nn.Module):
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, state_dim, action_dim, n_hidden_layers=5):
         super().__init__()
-        self.layers = nn.Sequential(
-            nn.Linear(state_dim, state_dim * 4),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(state_dim * 4, action_dim)
-        )
+        hidden_layers = [nn.Linear(state_dim, HIDDEN_DIM), nn.LeakyReLU()]
+        for _ in range(n_hidden_layers):
+            hidden_layers += [nn.Linear(HIDDEN_DIM, HIDDEN_DIM), nn.LeakyReLU()]
+        hidden_layers += [nn.Linear(HIDDEN_DIM, action_dim)]
+        self.layers = nn.Sequential(*hidden_layers)
 
     def forward(self, x):
         return self.layers(x)
@@ -37,26 +42,21 @@ class Net(nn.Module):
 
 class DQN:
     def __init__(self, state_dim, action_dim, buffer_size=1000, gamma=0.99, verbose=False):
-        self.steps = 0  # Do not change
-        self.net = Net(state_dim, action_dim)
-        self.optimizer = torch.optim.Adam(self.net.parameters())
-        self.net_target = Net(state_dim, action_dim)
+        self.steps = 0
+        self.net = Net(state_dim, action_dim).cuda()
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=LEARNING_RATE)
+        self.net_target = Net(state_dim, action_dim).cuda()
         self.buffer = deque(maxlen=buffer_size)
         self.batch_size = BATCH_SIZE
         self.verbose = verbose
         self.gamma = gamma
+        self.best_r = -1e8
 
     def consume_transition(self, transition):
-        # Add transition to a replay buffer.
-        # Hint: use deque with specified maxlen. It will remove old experience automatically.
         self.buffer.append(transition)
 
     def sample_batch(self):
-        # Sample batch from a replay buffer.
-        # Hints:
-        # 1. Use random.randint
-        # 2. Turn your batch into a numpy.array before turning it to a Tensor. It will work faster
-        ix = np.random.randint(0, len(self.buffer), size=self.batch_size)
+        ix = rs.randint(0, len(self.buffer), size=self.batch_size)
         batch = [self.buffer[ind] for ind in ix]
         return batch
 
@@ -68,32 +68,29 @@ class DQN:
         loss = F.mse_loss(y_hat, y)
         self.optimizer.zero_grad()
         loss.backward()
+        nn.utils.clip_grad_value_(self.net.parameters(), GRADIENT_CLIP)
         self.optimizer.step()
 
         if self.verbose:
             print(f'loss: {loss.item()}')
 
     def update_target_network(self):
-        # Update weights of a target Q-network here. You may use copy.deepcopy to do this or
-        # assign a values of network parameters via PyTorch methods.
-        self.net_target = copy.deepcopy(self.net_target)
+        self.net_target = copy.deepcopy(self.net)
         self.net_target = self.net_target.eval()
 
     def act(self, state, target=False):
-        # Compute an action. Do not forget to turn state to a Tensor and then turn an action to a numpy array.
         with torch.no_grad():
-            state = torch.from_numpy(np.array(state))
+            self.net = self.net.eval()
+            state = torch.from_numpy(np.array(state)).cuda()
             preds = self.net(state)
             action = torch.argmax(preds)
+            self.net = self.net.train()
         return action.item()
 
     def parse_batch(self, batch_trans):
-        states_fr, actions, states_to, rewards, dones = zip(*batch_trans)
-        train_batch = torch.from_numpy(np.array(states_fr))
-        actions = torch.from_numpy(np.array(actions)).long()
-        target_batch = torch.from_numpy(np.array(states_to))
-        rewards = torch.from_numpy(np.array(rewards))
-        dones = torch.from_numpy(np.array(dones))
+        arrs = zip(*batch_trans)
+        train_batch, actions, target_batch, rewards, dones = map(lambda arr: torch.from_numpy(np.array(arr)).cuda(),
+                                                                 arrs)
 
         with torch.no_grad():
             target_preds = self.net_target(target_batch)
@@ -107,7 +104,6 @@ class DQN:
         return train_batch, actions, y
 
     def update(self, transition):
-        # You don't need to change this
         self.consume_transition(transition)
         if self.steps % STEPS_PER_UPDATE == 0:
             batch = self.sample_batch()
@@ -117,8 +113,10 @@ class DQN:
             self.update_target_network()
         self.steps += 1
 
-    def save(self):
-        torch.save(self.net, "agent.pkl")
+    def save(self, r):
+        if self.best_r < r:
+            torch.save(self.net.state_dict(), "agent.pt")
+            self.best_r = r
 
 
 def evaluate_policy(agent, episodes=5):
@@ -142,9 +140,16 @@ if __name__ == "__main__":
     env = make("LunarLander-v2")
     env.seed(SEED)
     env.action_space.seed(SEED)
+    load = False
     dqn = DQN(state_dim=env.observation_space.shape[0], action_dim=env.action_space.n,
-              buffer_size=INITIAL_STEPS * 2, verbose=False)
-    eps = 0.1
+              buffer_size=BUFFER_SIZE, verbose=False)
+    if load:
+        model = torch.load('agent.pkl')
+        dqn.net = copy.deepcopy(model).cuda()
+        dqn.net_target = copy.deepcopy(model).cuda()
+        dqn.net_target.eval()
+    eps = 0.15
+    eps_decay = 0.99999
     state = env.reset()
 
     for _ in range(INITIAL_STEPS):
@@ -160,7 +165,7 @@ if __name__ == "__main__":
         steps = 0
 
         # Epsilon-greedy policy
-        if np.random.random() < eps:
+        if rs.random() < eps:
             action = env.action_space.sample()
         else:
             action = dqn.act(state)
@@ -172,5 +177,8 @@ if __name__ == "__main__":
 
         if (i + 1) % (TRANSITIONS // 100) == 0:
             rewards = evaluate_policy(dqn, 5)
-            print(f"Step: {i + 1}, Reward mean: {np.mean(rewards)}, Reward std: {np.std(rewards)}")
-            dqn.save()
+            mean, std = np.mean(rewards), np.std(rewards)
+            print(f"Step: {i + 1}, Reward mean: {mean}, Reward std: {std}")
+            dqn.save(mean)
+
+        eps *= eps_decay
