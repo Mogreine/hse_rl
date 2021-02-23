@@ -19,6 +19,7 @@ BATCH_SIZE = 512
 LEARNING_RATE = 1e-4
 l2 = 1e-5
 
+TAU = 0.005
 GRADIENT_CLIP = 5
 HIDDEN_DIM = 1024
 
@@ -71,12 +72,15 @@ class DQN:
         nn.utils.clip_grad_value_(self.net.parameters(), GRADIENT_CLIP)
         self.optimizer.step()
 
+        self.update_target_network()
+
         if self.verbose:
             print(f'loss: {loss.item()}')
 
     def update_target_network(self):
-        self.net_target = copy.deepcopy(self.net)
-        self.net_target = self.net_target.eval()
+        # self.net_target.load_state_dict(self.net.state_dict())
+        for target_param, local_param in zip(self.net_target.parameters(), self.net.parameters()):
+            target_param.data.copy_(TAU * local_param.data + (1.0 - TAU) * target_param.data)
 
     def act(self, state, target=False):
         with torch.no_grad():
@@ -109,8 +113,8 @@ class DQN:
             batch = self.sample_batch()
             batch, actions, y = self.parse_batch(batch)
             self.train_step(batch, actions, y)
-        if self.steps % STEPS_PER_TARGET_UPDATE == 0:
-            self.update_target_network()
+        # if self.steps % STEPS_PER_TARGET_UPDATE == 0:
+        #     self.update_target_network()
         self.steps += 1
 
     def save(self, r):
@@ -148,8 +152,8 @@ if __name__ == "__main__":
         dqn.net = copy.deepcopy(model).cuda()
         dqn.net_target = copy.deepcopy(model).cuda()
         dqn.net_target.eval()
-    eps = 0.15
-    eps_decay = 0.99999
+    eps_max = 0.1
+    eps_min = 0.01
     state = env.reset()
 
     for _ in range(INITIAL_STEPS):
@@ -163,7 +167,7 @@ if __name__ == "__main__":
 
     for i in range(TRANSITIONS):
         steps = 0
-
+        eps = eps_max - (eps_max - eps_min) * i / TRANSITIONS
         # Epsilon-greedy policy
         if rs.random() < eps:
             action = env.action_space.sample()
@@ -180,5 +184,3 @@ if __name__ == "__main__":
             mean, std = np.mean(rewards), np.std(rewards)
             print(f"Step: {i + 1}, Reward mean: {mean}, Reward std: {std}")
             dqn.save(mean)
-
-        eps *= eps_decay
