@@ -93,12 +93,15 @@ class Critic(nn.Module):
 
 class PPO:
     def __init__(self, state_dim, action_dim):
-        self.actor = Actor(state_dim, action_dim)
-        self.critic = Critic(state_dim)
+        self.actor = Actor(state_dim, action_dim).to(DEVICE)
+        self.critic = Critic(state_dim).to(DEVICE)
         self.actor_optim = Adam(self.actor.parameters(), ACTOR_LR)
         self.critic_optim = Adam(self.critic.parameters(), CRITIC_LR)
+        self.disc = GAMMA
+        self.eps = CLIP
 
     def update(self, trajectories):
+        # trajectory.append((s, pa, r, p, v))
         transitions = [t for traj in trajectories for t in traj]  # Turn a list of trajectories into list of transitions
         state, action, old_prob, target_value, advantage = zip(*transitions)
         state = np.array(state)
@@ -106,28 +109,50 @@ class PPO:
         old_prob = np.array(old_prob)
         target_value = np.array(target_value)
         advantage = np.array(advantage)
-        advnatage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+        advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
+        actor_loss_acc = 0
+        critic_loss_acc = 0
         for _ in range(BATCHES_PER_UPDATE):
             idx = np.random.randint(0, len(transitions), BATCH_SIZE)  # Choose random batch
-            s = torch.tensor(state[idx]).float()
-            a = torch.tensor(action[idx]).float()
-            op = torch.tensor(old_prob[idx]).float()  # Probability of the action in state s.t. old policy
-            v = torch.tensor(target_value[idx]).float()  # Estimated by lambda-returns
-            adv = torch.tensor(advantage[idx]).float()  # Estimated by generalized advantage estimation
+            s = torch.tensor(state[idx]).float().to(DEVICE)
+            a = torch.tensor(action[idx]).float().to(DEVICE)
+            dist_old = torch.tensor(old_prob[idx]).float().to(
+                DEVICE)  # Probability of the action in state s.t. old policy
+            returns = torch.tensor(target_value[idx]).float().to(DEVICE)  # Estimated by lambda-returns
+            adv = torch.tensor(advantage[idx]).float().to(DEVICE)  # Estimated by generalized advantage estimation
 
             # TODO: Update actor here
+            a_new, pa_new, dist_new = self.actor.act(s)
+            dist_new = torch.exp(dist_new.log_prob(pa_new).sum(-1))
+            ratio = (torch.log(dist_new + 1e-8) - torch.log(dist_old + 1e-8)).exp()
+            p1 = ratio @ adv
+            p2 = torch.clip(ratio, 1 - CLIP, 1 + CLIP) @ adv
+            actor_loss = torch.min(p1, p2)
+            actor_loss_acc += actor_loss
+
             # TODO: Update critic here
+            value = self.critic.get_value(s)
+            critic_loss = F.mse_loss(value.flatten(), returns)
+            critic_loss_acc += critic_loss * GAMMA
+
+        self.actor_optim.zero_grad()
+        actor_loss_acc.backward()
+        self.actor_optim.step()
+
+        self.critic_optim.zero_grad()
+        critic_loss_acc.backward()
+        self.critic_optim.step()
 
     def get_value(self, state):
         with torch.no_grad():
-            state = torch.tensor(np.array([state])).float()
+            state = torch.tensor(np.array([state])).float().to(DEVICE)
             value = self.critic.get_value(state)
         return value.cpu().item()
 
     def act(self, state):
         with torch.no_grad():
-            state = torch.tensor(np.array([state])).float()
+            state = torch.tensor(np.array([state])).float().to(DEVICE)
             action, pure_action, distr = self.actor.act(state)
             prob = torch.exp(distr.log_prob(pure_action).sum(-1))
         return action.cpu().numpy()[0], pure_action.cpu().numpy()[0], prob.cpu().item()
