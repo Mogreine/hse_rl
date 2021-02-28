@@ -19,7 +19,7 @@ CRITIC_LR = 1e-4
 
 CLIP = 0.2
 ENTROPY_COEF = 1e-2
-BATCHES_PER_UPDATE = 64
+BATCHES_PER_UPDATE = 4
 BATCH_SIZE = 64
 
 MIN_TRANSITIONS_PER_UPDATE = 2048
@@ -54,6 +54,10 @@ class Actor(nn.Module):
             nn.ELU(),
             nn.Linear(256, 256),
             nn.ELU(),
+            nn.Linear(256, 256),
+            nn.ELU(),
+            nn.Linear(256, 256),
+            nn.ELU(),
             nn.Linear(256, action_dim)
         )
         self.sigma = nn.Parameter(torch.zeros(action_dim))
@@ -81,6 +85,10 @@ class Critic(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Linear(state_dim, 256),
+            nn.ELU(),
+            nn.Linear(256, 256),
+            nn.ELU(),
+            nn.Linear(256, 256),
             nn.ELU(),
             nn.Linear(256, 256),
             nn.ELU(),
@@ -113,6 +121,7 @@ class PPO:
 
         actor_loss_acc = 0
         critic_loss_acc = 0
+        entropy_acc = 0
         for _ in range(BATCHES_PER_UPDATE):
             idx = np.random.randint(0, len(transitions), BATCH_SIZE)  # Choose random batch
             s = torch.tensor(state[idx]).float().to(DEVICE)
@@ -125,7 +134,7 @@ class PPO:
             # TODO: Update actor here
             a_new, pa_new, dist_new = self.actor.act(s)
             dist_new = torch.exp(dist_new.log_prob(pa_new).sum(-1))
-            ratio = (torch.log(dist_new + 1e-8) - torch.log(dist_old + 1e-8)).exp()
+            ratio = (torch.log(dist_new + 1e-12) - torch.log(dist_old + 1e-12)).exp()
             p1 = ratio @ adv
             p2 = torch.clip(ratio, 1 - CLIP, 1 + CLIP) @ adv
             actor_loss = torch.min(p1, p2)
@@ -134,14 +143,21 @@ class PPO:
             # TODO: Update critic here
             value = self.critic.get_value(s)
             critic_loss = F.mse_loss(value.flatten(), returns)
-            critic_loss_acc += critic_loss * GAMMA
+            critic_loss_acc += critic_loss
+
+            # entropy calculation
+            entropy_acc += dist_old @ (torch.log(dist_new + 1e-12) - torch.log(dist_old + 1e-12))
+
+        total_loss = -actor_loss_acc + critic_loss_acc * GAMMA - ENTROPY_COEF * entropy_acc
+
+        # print(f'Loss: {total_loss.item()}')
 
         self.actor_optim.zero_grad()
-        actor_loss_acc.backward()
-        self.actor_optim.step()
-
         self.critic_optim.zero_grad()
-        critic_loss_acc.backward()
+
+        total_loss.backward()
+
+        self.actor_optim.step()
         self.critic_optim.step()
 
     def get_value(self, state):
