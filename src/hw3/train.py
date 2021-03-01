@@ -8,8 +8,14 @@ from torch.distributions import Normal
 from torch.nn import functional as F
 from torch.optim import Adam
 import random
+from numpy.random import MT19937
+from numpy.random import RandomState, SeedSequence
 
 ENV_NAME = "Walker2DBulletEnv-v0"
+
+SEED = 65537
+rs = RandomState(MT19937(SeedSequence(SEED)))
+torch.manual_seed(SEED)
 
 LAMBDA = 0.95
 GAMMA = 0.99
@@ -19,10 +25,10 @@ CRITIC_LR = 1e-4
 
 CLIP = 0.2
 ENTROPY_COEF = 1e-2
-BATCHES_PER_UPDATE = 4
-BATCH_SIZE = 64
+BATCHES_PER_UPDATE = 64
+BATCH_SIZE = 256
 
-MIN_TRANSITIONS_PER_UPDATE = 2048
+MIN_TRANSITIONS_PER_UPDATE = 8192
 MIN_EPISODES_PER_UPDATE = 4
 
 ITERATIONS = 1000
@@ -51,10 +57,6 @@ class Actor(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Linear(state_dim, 256),
-            nn.ELU(),
-            nn.Linear(256, 256),
-            nn.ELU(),
-            nn.Linear(256, 256),
             nn.ELU(),
             nn.Linear(256, 256),
             nn.ELU(),
@@ -88,10 +90,6 @@ class Critic(nn.Module):
             nn.ELU(),
             nn.Linear(256, 256),
             nn.ELU(),
-            nn.Linear(256, 256),
-            nn.ELU(),
-            nn.Linear(256, 256),
-            nn.ELU(),
             nn.Linear(256, 1)
         )
 
@@ -105,8 +103,6 @@ class PPO:
         self.critic = Critic(state_dim).to(DEVICE)
         self.actor_optim = Adam(self.actor.parameters(), ACTOR_LR)
         self.critic_optim = Adam(self.critic.parameters(), CRITIC_LR)
-        self.disc = GAMMA
-        self.eps = CLIP
 
     def update(self, trajectories):
         # trajectory.append((s, pa, r, p, v))
@@ -132,33 +128,25 @@ class PPO:
             adv = torch.tensor(advantage[idx]).float().to(DEVICE)  # Estimated by generalized advantage estimation
 
             # TODO: Update actor here
-            a_new, pa_new, dist_new = self.actor.act(s)
-            dist_new = torch.exp(dist_new.log_prob(pa_new).sum(-1))
-            ratio = (torch.log(dist_new + 1e-12) - torch.log(dist_old + 1e-12)).exp()
-            p1 = ratio @ adv
-            p2 = torch.clip(ratio, 1 - CLIP, 1 + CLIP) @ adv
-            actor_loss = torch.min(p1, p2)
-            actor_loss_acc += actor_loss
+            new_prob, distr = self.actor.compute_proba(s, a)
+            ratio = (torch.log(new_prob + 1e-12) - torch.log(dist_old + 1e-12)).exp()
+            p1 = ratio * adv
+            p2 = torch.clip(ratio, 1 - CLIP, 1 + CLIP) * adv
+            actor_loss = -torch.mean(torch.minimum(p1, p2)) - ENTROPY_COEF * distr.entropy().mean()
+
+            self.actor_optim.zero_grad()
+            actor_loss.backward()
+            self.actor_optim.step()
 
             # TODO: Update critic here
             value = self.critic.get_value(s)
             critic_loss = F.mse_loss(value.flatten(), returns)
-            critic_loss_acc += critic_loss
 
-            # entropy calculation
-            entropy_acc += dist_old @ (torch.log(dist_new + 1e-12) - torch.log(dist_old + 1e-12))
+            self.critic_optim.zero_grad()
+            critic_loss.backward()
+            self.critic_optim.step()
 
-        total_loss = -actor_loss_acc + critic_loss_acc * GAMMA - ENTROPY_COEF * entropy_acc
 
-        # print(f'Loss: {total_loss.item()}')
-
-        self.actor_optim.zero_grad()
-        self.critic_optim.zero_grad()
-
-        total_loss.backward()
-
-        self.actor_optim.step()
-        self.critic_optim.step()
 
     def get_value(self, state):
         with torch.no_grad():
@@ -224,8 +212,12 @@ if __name__ == "__main__":
 
         ppo.update(trajectories)
 
+        rew_mean_best = 0
         if (i + 1) % (ITERATIONS // 100) == 0:
-            rewards = evaluate_policy(env, ppo, 5)
+            rewards = evaluate_policy(env, ppo, 50)
+            rm = np.mean(rewards)
             print(
                 f"Step: {i + 1}, Reward mean: {np.mean(rewards)}, Reward std: {np.std(rewards)}, Episodes: {episodes_sampled}, Steps: {steps_sampled}")
-            ppo.save()
+            if rew_mean_best < rm:
+                rm = rew_mean_best
+                ppo.save()

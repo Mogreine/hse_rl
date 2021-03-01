@@ -3,15 +3,25 @@ import numpy as np
 import os
 import torch
 
+from .train import Actor
+
+SEED = 65537
+DEVICE = torch.device("cpu")
+torch.manual_seed(SEED)
+
 
 class Agent:
     def __init__(self):
-        self.model = torch.load(__file__[:-8] + "/agent.pkl")
+        self.model = Actor(22, 6)
+        self.model.load_state_dict(torch.load(__file__[:-8] + "/agent.pt", map_location=DEVICE))
+        self.model = self.model.to(DEVICE)
+        self.model.eval()
 
     def act(self, state):
         with torch.no_grad():
-            state = torch.tensor(np.array(state)).float()
-            return None  # TODO
+            state = torch.unsqueeze(torch.tensor(np.array(state)).float(), 0).to(DEVICE)
+            action, _, _ = self.model.act(state)
+        return action[0].numpy()
 
     def reset(self):
         pass
