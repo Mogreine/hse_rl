@@ -17,18 +17,19 @@ SEED = 65537
 rs = RandomState(MT19937(SeedSequence(SEED)))
 torch.manual_seed(SEED)
 
-LAMBDA = 0.95
+LAMBDA = 0.97
 GAMMA = 0.99
 
-ACTOR_LR = 2e-4
-CRITIC_LR = 1e-4
+ACTOR_LR = 3e-4
+CRITIC_LR = 2e-4
 
 CLIP = 0.2
+GRADIENT_CLIP = 0.5
 ENTROPY_COEF = 1e-2
 BATCHES_PER_UPDATE = 64
-BATCH_SIZE = 256
+BATCH_SIZE = 64
 
-MIN_TRANSITIONS_PER_UPDATE = 8192
+MIN_TRANSITIONS_PER_UPDATE = 2048
 MIN_EPISODES_PER_UPDATE = 4
 
 ITERATIONS = 1000
@@ -105,27 +106,17 @@ class PPO:
         self.critic_optim = Adam(self.critic.parameters(), CRITIC_LR)
 
     def update(self, trajectories):
-        # trajectory.append((s, pa, r, p, v))
         transitions = [t for traj in trajectories for t in traj]  # Turn a list of trajectories into list of transitions
-        state, action, old_prob, target_value, advantage = zip(*transitions)
-        state = np.array(state)
-        action = np.array(action)
-        old_prob = np.array(old_prob)
-        target_value = np.array(target_value)
-        advantage = np.array(advantage)
+        state, action, old_prob, target_value, advantage = list(map(lambda arr: torch.tensor(arr).float().to(DEVICE), zip(*transitions)))
         advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
-        actor_loss_acc = 0
-        critic_loss_acc = 0
-        entropy_acc = 0
         for _ in range(BATCHES_PER_UPDATE):
             idx = np.random.randint(0, len(transitions), BATCH_SIZE)  # Choose random batch
-            s = torch.tensor(state[idx]).float().to(DEVICE)
-            a = torch.tensor(action[idx]).float().to(DEVICE)
-            dist_old = torch.tensor(old_prob[idx]).float().to(
-                DEVICE)  # Probability of the action in state s.t. old policy
-            returns = torch.tensor(target_value[idx]).float().to(DEVICE)  # Estimated by lambda-returns
-            adv = torch.tensor(advantage[idx]).float().to(DEVICE)  # Estimated by generalized advantage estimation
+            s = state[idx]
+            a = action[idx]
+            dist_old = old_prob[idx]
+            returns = target_value[idx]
+            adv = advantage[idx]
 
             # TODO: Update actor here
             new_prob, distr = self.actor.compute_proba(s, a)
@@ -136,6 +127,7 @@ class PPO:
 
             self.actor_optim.zero_grad()
             actor_loss.backward()
+            # nn.utils.clip_grad_value_(self.actor.parameters(), GRADIENT_CLIP)
             self.actor_optim.step()
 
             # TODO: Update critic here
@@ -144,9 +136,8 @@ class PPO:
 
             self.critic_optim.zero_grad()
             critic_loss.backward()
+            # nn.utils.clip_grad_value_(self.critic.parameters(), GRADIENT_CLIP)
             self.critic_optim.step()
-
-
 
     def get_value(self, state):
         with torch.no_grad():
