@@ -20,7 +20,7 @@ class Agent:
     def act(self, state):
         with torch.no_grad():
             state = torch.unsqueeze(torch.tensor(np.array(state)).float(), 0).to(DEVICE)
-            action, _, _ = self.model.act(state)
+            action = self.model(state)
         return action[0].numpy()
 
     def reset(self):

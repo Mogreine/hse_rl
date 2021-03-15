@@ -12,7 +12,7 @@ torch.manual_seed(SEED)
 
 class Agent:
     def __init__(self):
-        self.model = Actor(22, 6)
+        self.model = Actor(26, 6)
         self.model.load_state_dict(torch.load(__file__[:-8] + "/agent.pt", map_location=DEVICE))
         self.model = self.model.to(DEVICE)
         self.model.eval()
